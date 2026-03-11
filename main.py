@@ -9,9 +9,6 @@ Renders:
   1. Themes × Leadership heatmap  (co-occurrence)
   2. Themes × Publishers heatmap  (top-N publishers)
   3. Top publishers bar chart
-
-Hover on heatmap cells to preview top mentions.
-Click on a cell to expand article links below the chart.
 """
 
 import os
@@ -30,18 +27,13 @@ CATS_URL     = f"{BASE_URL}/rulecategories"
 BW_TOKEN = st.secrets.get("BRANDWATCH_TOKEN", "")
 GROQ_KEY = st.secrets.get("GROQ_API_KEY", "")
 
-
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 HEADERS = {"Authorization": f"Bearer {BW_TOKEN}", "Accept": "application/json"}
 
-THEMES_KEYWORD     = "theme"
-LEADERSHIP_KEYWORD = "leadership"
+THEMES_KEYWORD    = "theme"       # matches "Apollo Themes 25-26"
+LEADERSHIP_KEYWORD = "leadership"  # matches "Leadership"
 
-
-# ─────────────────────────────────────────────
-# DATA FETCHING
-# ─────────────────────────────────────────────
 
 @st.cache_data(ttl=86_400, show_spinner=False)
 def fetch_category_groups() -> list:
@@ -54,7 +46,10 @@ def fetch_category_groups() -> list:
 
 
 def parse_category_tree(groups: list) -> dict:
-    """Returns group_children: { group_name_lower: {child_id: child_name} }"""
+    """
+    Returns group_children: { group_name_lower: {child_id: child_name} }
+    Walks the full tree so nested children are captured under their root group.
+    """
     group_children: dict[str, dict[int, str]] = {}
 
     def collect_descendants(node: dict) -> dict[int, str]:
@@ -102,8 +97,8 @@ def fetch_all_mentions(start: str, end: str, page_size: int = 5000) -> pd.DataFr
             st.error(f"Mentions API {resp.status_code}: {resp.text[:300]}")
             break
 
-        data    = resp.json()
-        batch   = data.get("results", [])
+        data  = resp.json()
+        batch = data.get("results", [])
         total_r = data.get("totalResults", data.get("resultsTotal", None))
         all_rows.extend(batch)
         fetched = len(all_rows)
@@ -125,10 +120,6 @@ def fetch_all_mentions(start: str, end: str, page_size: int = 5000) -> pd.DataFr
     return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
 
 
-# ─────────────────────────────────────────────
-# CATEGORY HELPERS
-# ─────────────────────────────────────────────
-
 def extract_cat_ids(cell) -> set:
     """
     Brandwatch categories field is a list of dicts {"id":…} or plain ints.
@@ -147,10 +138,6 @@ def extract_cat_ids(cell) -> set:
     return ids
 
 
-# ─────────────────────────────────────────────
-# PIVOT BUILDERS
-# ─────────────────────────────────────────────
-
 def build_cross_pivot(df: pd.DataFrame, row_cats: dict, col_cats: dict) -> pd.DataFrame:
     """Co-occurrence: cell[r][c] = # mentions tagged with BOTH r AND c."""
     matrix = pd.DataFrame(0, index=list(row_cats.values()), columns=list(col_cats.values()))
@@ -166,8 +153,8 @@ def build_cross_pivot(df: pd.DataFrame, row_cats: dict, col_cats: dict) -> pd.Da
 
 def build_theme_publisher_pivot(df: pd.DataFrame, theme_cats: dict, top_n: int = 20) -> pd.DataFrame:
     """Themes × publisher domain, top-N publishers by total mentions."""
-    dom_col  = next((c for c in ["domain", "site", "sourceName"] if c in df.columns), None)
-    df       = df.copy()
+    dom_col = next((c for c in ["domain", "site", "sourceName"] if c in df.columns), None)
+    df = df.copy()
     df["_pub"] = df[dom_col].fillna("Unknown") if dom_col else "Unknown"
     top_pubs = df["_pub"].value_counts().head(top_n).index.tolist()
     matrix   = pd.DataFrame(0, index=list(theme_cats.values()), columns=top_pubs)
@@ -183,89 +170,12 @@ def build_theme_publisher_pivot(df: pd.DataFrame, theme_cats: dict, top_n: int =
     return matrix
 
 
-# ─────────────────────────────────────────────
-# MENTION LOOKUP BUILDERS (for hover/click)
-# ─────────────────────────────────────────────
-
-def _mention_record(row) -> dict:
-    url     = row.get("originalUrl") or row.get("url") or ""
-    title   = (row.get("title") or "").strip()
-    snippet = (row.get("snippet") or "").strip()
-    domain  = row.get("domain") or row.get("site") or row.get("sourceName") or ""
-    date    = str(row.get("date") or "")[:10]
-    pub     = row.get("publicationName") or row.get("unifiedSourceName") or domain
-    sentiment = row.get("sentiment") or ""
-    return dict(title=title, snippet=snippet, url=url, domain=domain,
-                date=date, pub=pub, sentiment=sentiment)
-
-
-def build_mention_lookup(df: pd.DataFrame, row_cats: dict, col_cats: dict) -> dict:
-    """(row_label, col_label) → list of mention records (for Themes × Leadership)."""
-    lookup: dict[tuple, list] = {}
-    for _, row in df.iterrows():
-        ids      = extract_cat_ids(row.get("categories", []))
-        row_hits = [row_cats[i] for i in ids if i in row_cats]
-        col_hits = [col_cats[i] for i in ids if i in col_cats]
-        rec      = _mention_record(row)
-        for r in row_hits:
-            for c in col_hits:
-                lookup.setdefault((r, c), []).append(rec)
-    return lookup
-
-
-def build_mention_lookup_pub(df: pd.DataFrame, theme_cats: dict, top_pubs: list) -> dict:
-    """(theme_label, publisher) → list of mention records (for Themes × Publishers)."""
-    top_pub_set = set(top_pubs)
-    dom_col     = next((c for c in ["domain", "site", "sourceName"] if c in df.columns), None)
-    lookup: dict[tuple, list] = {}
-    for _, row in df.iterrows():
-        pub = (row.get(dom_col) if dom_col else None) or "Unknown"
-        if pub not in top_pub_set:
-            continue
-        ids = extract_cat_ids(row.get("categories", []))
-        rec = _mention_record(row)
-        for i in ids:
-            if i in theme_cats:
-                lookup.setdefault((theme_cats[i], pub), []).append(rec)
-    return lookup
-
-
-# ─────────────────────────────────────────────
-# HEATMAP RENDERER
-# ─────────────────────────────────────────────
-
-def render_heatmap(
-    matrix: pd.DataFrame,
-    title: str,
-    x_title: str,
-    y_title: str,
-    height: int = 540,
-    mention_lookup: dict = None,
-) -> go.Figure:
-    z    = matrix.values.tolist()
-    x    = list(matrix.columns)
-    y    = list(matrix.index)
+def render_heatmap(matrix: pd.DataFrame, title: str, x_title: str, y_title: str,
+                   height: int = 540) -> go.Figure:
+    z = matrix.values.tolist()
+    x = list(matrix.columns)
+    y = list(matrix.index)
     text = [[str(v) if v > 0 else "" for v in row] for row in z]
-
-    # Build customdata: top-3 snippets per cell as a single hover string
-    customdata = []
-    for row_label in y:
-        row_data = []
-        for col_label in x:
-            if mention_lookup:
-                mentions = mention_lookup.get((row_label, col_label), [])[:3]
-                parts = []
-                for m in mentions:
-                    t   = (m["title"] or m["snippet"] or "(no title)")[:70]
-                    pub = m["pub"] or m["domain"]
-                    dt  = m["date"]
-                    sent = f' · {m["sentiment"]}' if m["sentiment"] else ""
-                    parts.append(f"▸ {t}  [{pub}{sent}, {dt}]")
-                cell_str = "<br>".join(parts) if parts else "—"
-            else:
-                cell_str = ""
-            row_data.append(cell_str)
-        customdata.append(row_data)
 
     GOR_SCALE = [
         [0.000, "#1a1a1a"],
@@ -282,15 +192,12 @@ def render_heatmap(
     fig = go.Figure(go.Heatmap(
         z=z, x=x, y=y,
         text=text, texttemplate="%{text}",
-        customdata=customdata,
         textfont={"size": 11, "color": "white", "family": "Arial Black"},
         colorscale=GOR_SCALE, showscale=True, hoverongaps=False,
         hovertemplate=(
             f"<b>{y_title}:</b> %{{y}}<br>"
             f"<b>{x_title}:</b> %{{x}}<br>"
-            "<b>Mentions:</b> %{z}<br>"
-            "<br>%{customdata}"
-            "<extra></extra>"
+            "<b>Mentions:</b> %{z}<extra></extra>"
         ),
         colorbar=dict(
             thickness=14, len=0.85,
@@ -316,98 +223,39 @@ def render_heatmap(
         paper_bgcolor="#000000",
         plot_bgcolor="#000000",
         font=dict(family="'Source Sans 3', sans-serif", color="#ffffff"),
-        hoverlabel=dict(
-            bgcolor="#111111",
-            bordercolor="#ffffff",
-            font=dict(size=12, color="#ffffff", family="'Space Mono', monospace"),
-        ),
     )
     return fig
 
-
-def render_click_panel(lookup: dict, row_label: str, col_label: str,
-                       row_title: str, col_title: str, key_prefix: str):
-    """
-    Shows a styled expandable panel with linked articles for the clicked cell.
-    Called after a plotly_chart click event.
-    """
-    mentions = lookup.get((row_label, col_label), [])
-    st.markdown(
-        f'<div class="click-panel">'
-        f'<span class="click-hdr">{row_title}: <b>{row_label}</b> &nbsp;×&nbsp; '
-        f'{col_title}: <b>{col_label}</b> &nbsp;—&nbsp; {len(mentions)} mention(s)</span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-    if not mentions:
-        st.info("No mentions found for this cell.")
-        return
-
-    # Sentiment badge colours
-    sent_colors = {"positive": "#2d7a3a", "negative": "#d63b1f", "neutral": "#555555"}
-
-    for m in mentions[:15]:   # show up to 15
-        title   = m["title"] or m["snippet"][:80] or "(untitled)"
-        url     = m["url"]
-        pub     = m["pub"] or m["domain"]
-        date    = m["date"]
-        snippet = m["snippet"]
-        sent    = m["sentiment"]
-        sc      = sent_colors.get(sent, "#555555")
-
-        title_html = (
-            f'<a href="{url}" target="_blank" style="color:#aaffaa;font-weight:700;'
-            f'text-decoration:none;">{title}</a>'
-            if url else
-            f'<span style="color:#ffffff;font-weight:700;">{title}</span>'
-        )
-        sent_badge = (
-            f'<span style="background:{sc};color:#fff;padding:1px 7px;'
-            f'font-size:.68rem;margin-left:8px;font-family:\'Space Mono\',monospace;">'
-            f'{sent}</span>'
-            if sent else ""
-        )
-        snippet_html = (
-            f'<div style="color:#aaaaaa;font-size:.78rem;margin-top:3px;">{snippet[:160]}…</div>'
-            if snippet else ""
-        )
-
-        st.markdown(
-            f'<div class="mention-card">'
-            f'{title_html}{sent_badge}'
-            f'<div style="color:#666666;font-size:.72rem;margin-top:4px;">'
-            f'{pub} &nbsp;·&nbsp; {date}</div>'
-            f'{snippet_html}'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-
-# ─────────────────────────────────────────────
-# STYLED TABLE
-# ─────────────────────────────────────────────
-
 def styled_table(matrix: pd.DataFrame):
+    """
+    Color cells: low = green, mid = orange, high = red. Zero cells = dark.
+    No matplotlib required.
+    """
     max_val = matrix.values.max() if matrix.values.max() > 0 else 1
+
     palette = [
-        "#1a1a1a", "#1a4d2e", "#2d7a3a", "#52b44b",
-        "#a8c84a", "#f5a623", "#e8732a", "#d63b1f", "#b01010",
+        "#1a1a1a",  # 0  — zero / empty (dark)
+        "#1a4d2e",  # 1  — very low (dark green)
+        "#2d7a3a",  # 2  — low (green)
+        "#52b44b",  # 3  — low-mid (bright green)
+        "#a8c84a",  # 4  — mid (yellow-green)
+        "#f5a623",  # 5  — mid-high (orange)
+        "#e8732a",  # 6  — high (dark orange)
+        "#d63b1f",  # 7  — very high (red-orange)
+        "#b01010",  # 8  — max (deep red)
     ]
 
     def cell_color(val):
         if val == 0:
             return "background-color: #1a1a1a; color: #444444; font-weight:400;"
         ratio = val / max_val
-        idx   = 1 + min(int(ratio * 7.99), 7)
-        return f"background-color: {palette[idx]}; color: #ffffff; font-weight: 700;"
+        idx = 1 + min(int(ratio * 7.99), 7)
+        bg  = palette[idx]
+        fg  = "#ffffff"
+        return f"background-color: {bg}; color: {fg}; font-weight: 700;"
 
     return matrix.style.applymap(cell_color).format("{:,.0f}")
 
-
-# ─────────────────────────────────────────────
-# PAGE CONFIG & GLOBAL CSS
-# ─────────────────────────────────────────────
 
 st.set_page_config(
     page_title="Apollo — Media Intelligence",
@@ -425,17 +273,20 @@ html, body, [class*="css"], .stApp, section[data-testid="stSidebar"] {
     color: #ffffff !important;
 }
 
+/* Main area and sidebar backgrounds */
 .stApp                                      { background: #000000 !important; }
 section[data-testid="stSidebar"]            { background: #0a0a0a !important; border-right: 1px solid #ffffff; }
 section[data-testid="stSidebar"] *          { color: #ffffff !important; }
 
+/* All text white */
 p, span, label, div, li, h1, h2, h3, h4   { color: #ffffff !important; }
 .stMarkdown, .stCaption, .stText           { color: #ffffff !important; }
 
-.stDateInput input, .stSlider, .stCheckbox { color: #ffffff !important; }
+/* Inputs / widgets */
+.stDateInput input, .stSlider, .stCheckbox { color: #ffffff !important filter: invert(1) hue-rotate(180deg); }
 .stButton > button {
     background: black !important;
-    color: #ffffff !important;
+    color: #000000 !important;
     font-weight: 700;
     border: 2px solid #ffffff !important;
     border-radius: 0 !important;
@@ -443,14 +294,16 @@ p, span, label, div, li, h1, h2, h3, h4   { color: #ffffff !important; }
     font-family: 'Space Mono', monospace !important;
 }
 .stButton > button:hover {
-    background: #ffffff !important;
-    color: #000000 !important;
+    background: #000000 !important;
+    color: #ffffff !important;
 }
 
-details, summary { background: #000000 !important; color: #ffffff !important; border: 1px solid #ffffff !important; }
-summary:hover    { background: #111111 !important; }
+/* Expander */
+details, summary                            { background: #000000 !important; color: #ffffff !important; border: 1px solid #ffffff !important; }
+summary:hover                               { background: #111111 !important; }
 
-.stInfo, .stWarning, .stError, .stSuccess { filter: invert(1) hue-rotate(180deg); }
+/* Info / warning boxes */
+.stInfo, .stWarning, .stError, .stSuccess  { filter: invert(1) hue-rotate(180deg); }
 
 /* KPI cards */
 .kpi-row  { display:flex; gap:12px; margin:14px 0 20px; flex-wrap:wrap; }
@@ -477,34 +330,6 @@ summary:hover    { background: #111111 !important; }
     text-transform:uppercase;
 }
 
-/* Click panel header */
-.click-panel {
-    background:#0d0d0d;
-    border-left: 3px solid #ffffff;
-    padding: 10px 16px;
-    margin: 10px 0 6px;
-}
-.click-hdr {
-    font-family:'Space Mono',monospace;
-    font-size:.82rem;
-    color:#cccccc !important;
-    letter-spacing:.03em;
-}
-
-/* Mention cards */
-.mention-card {
-    background: #0a0a0a;
-    border: 1px solid #2a2a2a;
-    border-left: 3px solid #ffffff;
-    padding: 10px 14px;
-    margin: 6px 0;
-    transition: border-color .15s;
-}
-.mention-card:hover {
-    border-left-color: #52b44b;
-    background: #111111;
-}
-
 /* Category pills */
 .tag {
     display:inline-block;
@@ -517,59 +342,33 @@ summary:hover    { background: #111111 !important; }
     font-family:'Space Mono',monospace;
 }
 
-.stDataFrame, iframe { background:#000000 !important; border:1px solid #ffffff; }
-
-/* Instruction hint */
-.hint {
-    font-size:.72rem;
-    color:#666666 !important;
-    font-family:'Space Mono',monospace;
-    margin: -4px 0 12px;
-    letter-spacing:.04em;
-}
+/* Dataframe / table */
+.stDataFrame, iframe                        { background:#000000 !important; border:1px solid #ffffff; }
 </style>
 """, unsafe_allow_html=True)
 
-
-# ─────────────────────────────────────────────
-# HEADER
-# ─────────────────────────────────────────────
-
 st.markdown("""
-<h1 style='color:#ffffff; margin-bottom:2px; margin-top:6px;
-           font-family:"Space Mono",monospace; letter-spacing:.03em;'>
+<h1 style='color:#ffffff; margin-bottom:2px; margin-top:6px; font-family:"Space Mono",monospace; letter-spacing:.03em;'>
   APOLLO HOSPITALS
 </h1>
-<p style='color:#ffffff; font-size:.85rem; margin:0 0 8px; opacity:.55;
-          letter-spacing:.1em; text-transform:uppercase; font-family:"Space Mono",monospace;'>
+<p style='color:#ffffff; font-size:.85rem; margin:0 0 8px; opacity:.55; letter-spacing:.1em; text-transform:uppercase; font-family:"Space Mono",monospace;'>
   Themes × Leadership &amp; Themes × Publishers
 </p>
 <hr style='border:1px solid #ffffff; margin-bottom:4px;'>
 """, unsafe_allow_html=True)
 
-
-# ─────────────────────────────────────────────
-# SIDEBAR
-# ─────────────────────────────────────────────
-
 with st.sidebar:
-    st.markdown("### 🗓 Date Range")
+    st.markdown("### Date Range")
     start_date = st.date_input("Start Date", value=datetime(2025, 3, 10).date())
     end_date   = st.date_input("End Date",   value=datetime(2025, 3, 11).date())
 
-    st.markdown("### ⚙️ Options")
-    top_n_pubs     = st.slider("Top N Publishers", 5, 40, 15, 5)
+    st.markdown("### Options")
+    top_n_pubs    = st.slider("Top N Publishers", 5, 40, 15, 5)
     hide_zero_rows = st.checkbox("Hide zero-count theme rows", value=True)
-    show_ai        = st.checkbox("Generate AI Insights (Groq)", value=bool(GROQ_KEY))
-    max_click_rows = st.slider("Max articles shown on click", 5, 30, 10, 5)
+    # show_ai       = st.checkbox("Generate AI Insights (Groq)", value=bool(GROQ_KEY))
 
     st.markdown("---")
     load_btn = st.button("Load Data", use_container_width=True, type="primary")
-
-
-# ─────────────────────────────────────────────
-# GUARDS
-# ─────────────────────────────────────────────
 
 if start_date > end_date:
     st.error("Start date must be before end date.")
@@ -578,11 +377,6 @@ if start_date > end_date:
 if not load_btn:
     st.info("Select a date range and click **Load Data** to fetch live Brandwatch data.")
     st.stop()
-
-
-# ─────────────────────────────────────────────
-# FETCH CATEGORIES
-# ─────────────────────────────────────────────
 
 with st.spinner("Fetching category tree…"):
     raw_groups = fetch_category_groups()
@@ -602,10 +396,20 @@ if not leader_cats:
     st.error(f"No 'Leadership' group found. Available: {list(group_children.keys())}")
     st.stop()
 
-
-# ─────────────────────────────────────────────
-# FETCH MENTIONS
-# ─────────────────────────────────────────────
+# with st.expander("✅ Detected category groups", expanded=False):
+#     c1, c2 = st.columns(2)
+#     with c1:
+#         st.markdown("**Themes**")
+#         st.markdown(
+#             " ".join(f'<span class="tag">{v}</span>' for v in themes_cats.values()),
+#             unsafe_allow_html=True,
+#         )
+#     with c2:
+#         st.markdown("**Leadership**")
+#         st.markdown(
+#             " ".join(f'<span class="tag">{v}</span>' for v in leader_cats.values()),
+#             unsafe_allow_html=True,
+#         )
 
 start_str = start_date.strftime("%Y-%m-%d")
 end_str   = end_date.strftime("%Y-%m-%d")
@@ -620,13 +424,9 @@ if df.empty:
 if "categories" not in df.columns:
     df["categories"] = [[] for _ in range(len(df))]
 
+tid_set = set(themes_cats.keys())
+lid_set = set(leader_cats.keys())
 
-# ─────────────────────────────────────────────
-# KPI CARDS
-# ─────────────────────────────────────────────
-
-tid_set      = set(themes_cats.keys())
-lid_set      = set(leader_cats.keys())
 total_mentions = len(df)
 themed_count   = df["categories"].apply(lambda c: bool(extract_cat_ids(c) & tid_set)).sum()
 leader_count   = df["categories"].apply(lambda c: bool(extract_cat_ids(c) & lid_set)).sum()
@@ -662,37 +462,15 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-
-# ─────────────────────────────────────────────
-# BUILD PIVOTS + LOOKUPS
-# ─────────────────────────────────────────────
-
 with st.spinner("Building pivot matrices…"):
     tl_matrix = build_cross_pivot(df, themes_cats, leader_cats)
     tp_matrix = build_theme_publisher_pivot(df, themes_cats, top_n=top_n_pubs)
-
-    # Mention lookups for hover + click
-    tl_lookup = build_mention_lookup(df, themes_cats, leader_cats)
-
-    # Publisher lookup — uses the top pub list already computed in tp_matrix
-    tp_top_pubs = list(tp_matrix.columns)
-    tp_lookup   = build_mention_lookup_pub(df, themes_cats, tp_top_pubs)
 
 if hide_zero_rows:
     tl_matrix = tl_matrix.loc[tl_matrix.sum(axis=1) > 0]
     tp_matrix = tp_matrix.loc[tp_matrix.sum(axis=1) > 0]
 
-
-# ─────────────────────────────────────────────
-# SECTION 1 — THEMES × LEADERSHIP
-# ─────────────────────────────────────────────
-
 st.markdown('<div class="sec-hdr">Themes × Leadership</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="hint">HOVER over a cell to preview top mentions &nbsp;·&nbsp; '
-    'CLICK a cell to expand article links below</div>',
-    unsafe_allow_html=True,
-)
 
 if tl_matrix.empty or tl_matrix.values.sum() == 0:
     st.info("No co-tagged Themes × Leadership mentions found in this period.")
@@ -703,44 +481,13 @@ else:
         x_title="Leadership",
         y_title="Theme",
         height=max(400, len(tl_matrix) * 38 + 220),
-        mention_lookup=tl_lookup,
     )
-
-    tl_event = st.plotly_chart(
-        fig_tl,
-        use_container_width=True,
-        on_select="rerun",
-        key="tl_chart",
-        selection_mode="points",
-    )
-
-    # Handle click → show article panel
-    tl_pts = (tl_event or {}).get("selection", {}).get("points", [])
-    if tl_pts:
-        pt          = tl_pts[0]
-        theme_lbl   = pt.get("y", "")
-        leader_lbl  = pt.get("x", "")
-        if theme_lbl and leader_lbl:
-            render_click_panel(
-                tl_lookup, theme_lbl, leader_lbl,
-                "Theme", "Leadership", "tl",
-            )
-
+    st.plotly_chart(fig_tl, use_container_width=True)
     with st.expander("Raw table — Themes × Leadership"):
         st.dataframe(styled_table(tl_matrix), use_container_width=True)
 
-
-# ─────────────────────────────────────────────
-# SECTION 2 — THEMES × PUBLISHERS
-# ─────────────────────────────────────────────
-
 st.markdown(
     f'<div class="sec-hdr">Themes × Publishers — Top {top_n_pubs}</div>',
-    unsafe_allow_html=True,
-)
-st.markdown(
-    '<div class="hint">HOVER over a cell to preview top mentions &nbsp;·&nbsp; '
-    'CLICK a cell to expand article links below</div>',
     unsafe_allow_html=True,
 )
 
@@ -753,47 +500,18 @@ else:
         x_title="Publisher",
         y_title="Theme",
         height=max(420, len(tp_matrix) * 38 + 240),
-        mention_lookup=tp_lookup,
     )
-
-    tp_event = st.plotly_chart(
-        fig_tp,
-        use_container_width=True,
-        on_select="rerun",
-        key="tp_chart",
-        selection_mode="points",
-    )
-
-    # Handle click → show article panel
-    tp_pts = (tp_event or {}).get("selection", {}).get("points", [])
-    if tp_pts:
-        pt         = tp_pts[0]
-        theme_lbl  = pt.get("y", "")
-        pub_lbl    = pt.get("x", "")
-        if theme_lbl and pub_lbl:
-            render_click_panel(
-                tp_lookup, theme_lbl, pub_lbl,
-                "Theme", "Publisher", "tp",
-            )
-
+    st.plotly_chart(fig_tp, use_container_width=True)
     with st.expander("Raw table — Themes × Publishers"):
         st.dataframe(styled_table(tp_matrix), use_container_width=True)
 
-
-# ─────────────────────────────────────────────
-# SECTION 3 — TOP PUBLISHERS BAR CHART
-# ─────────────────────────────────────────────
-
 if dom_col:
-    st.markdown(
-        '<div class="sec-hdr">Top Publishers by Total Mention Volume</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div class="sec-hdr">Top Publishers by Total Mention Volume</div>', unsafe_allow_html=True)
     top_pub_df = (
         df[dom_col].fillna("Unknown").value_counts().head(20)
-        .reset_index()
-        .rename(columns={dom_col: "Publisher", "count": "Mentions"})
+        .reset_index().rename(columns={dom_col: "Publisher", "count": "Mentions"})
     )
+
     if "index" in top_pub_df.columns:
         top_pub_df.columns = ["Publisher", "Mentions"]
 
@@ -810,23 +528,13 @@ if dom_col:
     fig_bar.update_layout(
         height=480,
         margin=dict(l=170, r=80, t=30, b=40),
-        yaxis=dict(
-            autorange="reversed",
-            tickfont=dict(size=11, color="#ffffff"),
-            linecolor="#ffffff", gridcolor="#222222",
-        ),
-        xaxis=dict(
-            title=dict(text="Mentions", font=dict(color="#ffffff")),
-            tickfont=dict(color="#ffffff"),
-            linecolor="#ffffff", gridcolor="#222222",
-        ),
+        yaxis=dict(autorange="reversed", tickfont=dict(size=11, color="#ffffff"),
+                   linecolor="#ffffff", gridcolor="#222222"),
+        xaxis=dict(title=dict(text="Mentions", font=dict(color="#ffffff")),
+                   tickfont=dict(color="#ffffff"), linecolor="#ffffff", gridcolor="#222222"),
         paper_bgcolor="#000000",
         plot_bgcolor="#000000",
         font=dict(color="#ffffff"),
-        hoverlabel=dict(
-            bgcolor="#111111",
-            bordercolor="#ffffff",
-            font=dict(size=12, color="#ffffff"),
-        ),
     )
     st.plotly_chart(fig_bar, use_container_width=True)
+
