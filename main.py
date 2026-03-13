@@ -342,18 +342,31 @@ def build_theme_publisher_pivot(df, theme_cats, allowed_pubs):
     return matrix
 
 
+# def _rec(row) -> dict:
+#     dom = row.get("domain") or row.get("site") or row.get("sourceName") or ""
+#     return dict(
+#         title     = (row.get("title") or "").strip(),
+#         snippet   = (row.get("snippet") or "").strip(),
+#         url       = row.get("originalUrl") or row.get("url") or "",
+#         domain    = dom,
+#         date      = str(row.get("date") or "")[:10],
+#         pub       = row.get("publicationName") or row.get("unifiedSourceName") or dom,
+#         sentiment = row.get("sentiment") or "",
+#     )
+
+
 def _rec(row) -> dict:
     dom = row.get("domain") or row.get("site") or row.get("sourceName") or ""
+    dom = str(dom) if dom and not isinstance(dom, float) else ""
     return dict(
-        title     = (row.get("title") or "").strip(),
-        snippet   = (row.get("snippet") or "").strip(),
-        url       = row.get("originalUrl") or row.get("url") or "",
+        title     = str(row.get("title") or "").strip(),
+        snippet   = str(row.get("snippet") or "").strip(),
+        url       = str(row.get("originalUrl") or row.get("url") or ""),
         domain    = dom,
         date      = str(row.get("date") or "")[:10],
-        pub       = row.get("publicationName") or row.get("unifiedSourceName") or dom,
-        sentiment = row.get("sentiment") or "",
+        pub       = str(row.get("publicationName") or row.get("unifiedSourceName") or dom or ""),
+        sentiment = str(row.get("sentiment") or ""),
     )
-
 
 def build_mention_lookup(df, row_cats, col_cats):
     lookup: dict = {}
@@ -482,13 +495,16 @@ def render_panel(lookup, row_label, col_label, row_title, col_title, max_rows=30
 
     cards_html = ""
     for m in mentions[:max_rows]:
-        title   = hlib.escape((m["title"] or m["snippet"][:90] or "(untitled)").strip())
+        # title   = hlib.escape((m["title"] or m["snippet"][:90] or "(untitled)").strip())
         url     = m["url"] or ""
-        pub     = hlib.escape(m["pub"] or m["domain"] or "Unknown")
+        # pub     = hlib.escape(m["pub"] or m["domain"] or "Unknown")
         date    = hlib.escape(m["date"] or "")
-        snippet = hlib.escape((m["snippet"] or "")[:200])
+        # snippet = hlib.escape((m["snippet"] or "")[:200])
         sent    = m["sentiment"] or ""
         sbg, sc, sbd = sent_map.get(sent, sent_map["neutral"])
+        pub     = hlib.escape(str(m["pub"] or m["domain"] or "Unknown"))
+        title   = hlib.escape(str((m["title"] or m["snippet"][:90] or "(untitled)")).strip())
+        snippet = hlib.escape(str((m["snippet"] or ""))[:200])
 
         badge = (
             f'<span style="display:inline-block;font-size:0.6rem;font-weight:700;padding:2px 8px;'
