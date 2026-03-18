@@ -461,7 +461,6 @@ def find_group(group_children: dict, keyword: str) -> dict:
             return children
     return {}
 
-
 @st.cache_data(ttl=3_600, show_spinner=False)
 def fetch_all_mentions(
     project_id: int, query_id: int, start: str, end: str, page_size: int = 5000
@@ -474,7 +473,7 @@ def fetch_all_mentions(
 
     while True:
         params = {"queryId": query_id, "startDate": start, "endDate": end, "pageSize": page_size, "pageType": "news", "orderBy": "date", "orderDirection": "asc", "cursor": nextCursor}
-        resp = requests.get(mentions_url, headers=HEADERS, params=params, timeout=30)
+        resp = requests.get(mentions_url, headers=HEADERS, params=params, timeout=60)
         if not resp.ok:
             st.error(f"Mentions API {resp.status_code}: {resp.text[:300]}")
             break
