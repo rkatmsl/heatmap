@@ -1,2 +1,6 @@
 plotly
 streamlit_plotly_events
+streamlit
+requests 
+pandas 
+openai
