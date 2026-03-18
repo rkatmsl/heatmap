@@ -463,7 +463,7 @@ def find_group(group_children: dict, keyword: str) -> dict:
 
 @st.cache_data(ttl=3_600, show_spinner=False)
 def fetch_all_mentions(
-    project_id: int, query_id: int, start: str, end: str, page_size: int = 2500
+    project_id: int, query_id: int, start: str, end: str, page_size: int = 4000
 ) -> pd.DataFrame:
     import time
 
@@ -883,7 +883,7 @@ with st.sidebar:
     client_cfg      = CLIENTS[selected_client]
 
     st.markdown("### Date Range")
-    start_date = _date.today() - _td(days=20)
+    start_date = _date.today() - _td(days=30)
     end_date   = _date.today()
     st.markdown(
         f'<div style="background:#1a1d27;border:1px solid #2a2d3e;border-radius:8px;'
