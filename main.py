@@ -463,7 +463,7 @@ def find_group(group_children: dict, keyword: str) -> dict:
 
 @st.cache_data(ttl=3_600, show_spinner=False)
 def fetch_all_mentions(
-    project_id: int, query_id: int, start: str, end: str, page_size: int = 5000
+    project_id: int, query_id: int, start: str, end: str, page_size: int = 1000
 ) -> pd.DataFrame:
     mentions_url = f"https://api.brandwatch.com/projects/{project_id}/data/mentions/"
     all_rows = []
