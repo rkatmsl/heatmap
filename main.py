@@ -369,7 +369,7 @@ def generate_dashboard_insights(
         "Your output must be plain text only — no markdown, no asterisks, no headers. "
         "Return exactly 5 bullet points, each on its own line, starting with a dash (-)."
     )
-    user = f"""Summarise the following media monitoring data for {client_name} over {date_range}.
+    user = f"""create a CXO-ready “Monthly Comms Update” covering the last 30 days for {client_name} over {date_range}, with:
 
 Numbers:
 - Total mentions: {total_mentions:,}
@@ -379,14 +379,26 @@ Numbers:
 - Top themes: {top_themes}
 - Top leaders: {top_leaders}
 
-Write exactly 5 bullet points (each starting with -) covering:
-1. Overall media volume and what it signals
-2. Dominant narrative themes in coverage
-3. Leadership visibility — who is driving attention and why
-4. Publisher diversity and reach quality
-5. One sharp, actionable strategic recommendation for the comms team
+a 1-paragraph executive summary (6–8 lines max),
+key narrative developments (what changed vs earlier in the month),
+journalist + publisher bias insights (who is skewing negative / neutral),
+top sensitive/crisis issues emerging in titles/snippets, even if not categorized into themes,
+theme-level insights (BWHM_Key Themes, plus any other recurring topics),
+city-wise perception (if city field is blank, derive it from URLs), and
+a table summary that a CXO can scan in 30 seconds.
 
-Keep every bullet under 30 words. Plain text only."""
+
+Write exactly 5 bullet points (each starting with -) covering:
+1. A 1-paragraph executive summary (6–8 lines max)
+2. Dominant narrative themes in coverage
+3. journalist + publisher bias insights (who is skewing negative / neutral)
+4. top sensitive/crisis issues emerging in titles/snippets, even if not categorized into themes
+5. theme-level insights (BWHM_Key Themes, plus any other recurring topics)
+6. city-wise perception (if city field is blank, derive it from URLs)
+7. a table summary that a CXO can scan in 30 seconds
+8. One sharp, actionable strategic recommendation for the comms team
+
+Keep the output crisp, boardroom tone, and highlight risks + recommended comms actions. Plain text only."""
 
     return call_openai(system, user, max_tokens=500)
 
@@ -736,7 +748,13 @@ def render_panel(
     import streamlit.components.v1 as components
 
     mentions = lookup.get((row_label, col_label), [])
-    count    = len(mentions)
+    if mentions:
+        mentions = sorted(
+            mentions,
+            key=lambda m: m.get("date", "0000-00-00"),
+            reverse=True
+        )
+    count = len(mentions)
 
     sent_map = {
         "positive": ("#0d2818", "#4ade80", "#166534"),
