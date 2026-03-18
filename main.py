@@ -839,7 +839,7 @@ with st.sidebar:
     client_cfg      = CLIENTS[selected_client]
 
     st.markdown("### Date Range")
-    start_date = _date.today() - _td(days=30)
+    start_date = _date.today() - _td(days=20)
     end_date   = _date.today()
     st.markdown(
         f'<div style="background:#1a1d27;border:1px solid #2a2d3e;border-radius:8px;'
