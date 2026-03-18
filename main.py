@@ -465,39 +465,83 @@ def find_group(group_children: dict, keyword: str) -> dict:
 def fetch_all_mentions(
     project_id: int, query_id: int, start: str, end: str, page_size: int = 1000
 ) -> pd.DataFrame:
+    import time
+
     mentions_url = f"https://api.brandwatch.com/projects/{project_id}/data/mentions/"
-    all_rows = []
-    page     = 0
-    progress = st.progress(0, text="Fetching mentions…")
-    nextCursor = ''
+    all_rows     = []
+    page         = 0
+    nextCursor   = ""
+    progress     = st.progress(0, text="Fetching mentions…")
+
+    MAX_RETRIES = 3
+    TIMEOUT     = 120  # seconds
+
+    session = requests.Session()
+    session.headers.update(HEADERS)
 
     while True:
-        params = {"queryId": query_id, "startDate": start, "endDate": end, "pageSize": page_size, "pageType": "news", "orderBy": "date", "orderDirection": "asc", "cursor": nextCursor}
-        resp = requests.get(mentions_url, headers=HEADERS, params=params, timeout=60)
-        if not resp.ok:
+        params = {
+            "queryId":        query_id,
+            "startDate":      start,
+            "endDate":        end,
+            "pageSize":       page_size,
+            "pageType":       "news",
+            "orderBy":        "date",
+            "orderDirection": "asc",
+            "cursor":         nextCursor,
+        }
+
+        # ── Retry loop ────────────────────────────────────────────────────
+        resp = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                resp = session.get(mentions_url, params=params, timeout=TIMEOUT)
+                break  # success
+            except requests.exceptions.ReadTimeout:
+                if attempt < MAX_RETRIES - 1:
+                    wait = 2 ** attempt  # 1s → 2s → 4s
+                    progress.progress(
+                        min(len(all_rows) / max(len(all_rows) + 1, 1), 1.0),
+                        text=f"Timeout on page {page + 1}, retrying in {wait}s… "
+                             f"(attempt {attempt + 2}/{MAX_RETRIES})",
+                    )
+                    time.sleep(wait)
+                else:
+                    progress.empty()
+                    st.error(
+                        f"Brandwatch API timed out after {MAX_RETRIES} attempts "
+                        f"on page {page + 1}. Returning {len(all_rows):,} mentions fetched so far."
+                    )
+                    return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
+
+        if resp is None or not resp.ok:
             st.error(f"Mentions API {resp.status_code}: {resp.text[:300]}")
             break
-        data    = resp.json()
-        batch   = data.get("results", [])
-        total_r = data.get("totalResults", data.get("resultsTotal", None))
+
+        data       = resp.json()
+        batch      = data.get("results", [])
+        total_r    = data.get("totalResults", data.get("resultsTotal", None))
+        nextCursor = data.get("nextCursor", "")
         all_rows.extend(batch)
         fetched = len(all_rows)
-        nextCursor = data.get("nextCursor")
+
         if total_r and total_r > 0:
             progress.progress(
                 min(fetched / total_r, 1.0),
                 text=f"Fetching {fetched:,} / {total_r:,}…",
             )
-        if len(batch) < page_size:
+
+        if len(batch) < page_size or not nextCursor:
             break
+
         page += 1
         if page > 40:
             st.warning("Page cap reached (40). Results may be incomplete.")
             break
 
     progress.empty()
+    session.close()
     return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
-
 
 def extract_cat_ids(cell) -> set:
     if not isinstance(cell, list):
