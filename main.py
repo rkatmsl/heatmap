@@ -918,7 +918,7 @@ with st.sidebar:
         f'{end_date.strftime("%d %b %Y")}</div></div>',
         unsafe_allow_html=True,
     )
-    st.caption("Showing last 30 days")
+    st.caption("Showing past 30 days")
 
     st.markdown("### Options")
     hide_zero_rows = st.checkbox("Hide zero rows", value=True)
